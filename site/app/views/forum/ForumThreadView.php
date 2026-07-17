@@ -9,6 +9,7 @@ use app\libraries\FileUtils;
 use app\libraries\ForumUtils;
 use app\entities\forum\Thread;
 use app\entities\forum\Post;
+use app\entities\forum\ForumBlockedUser;
 
 class ForumThreadView extends AbstractView {
     private function getSavedForumCategories($current_course, $categories) {
@@ -332,6 +333,19 @@ class ForumThreadView extends AbstractView {
             $posts = $thread->getPosts()->toArray();
         }
         $post_box_id = 2;
+        $blocked_author_ids = [];
+        if ($user->accessAdmin()) {
+            $author_ids = array_unique(array_map(
+                fn($p) => $p->getAuthor()->getId(),
+                $posts
+            ));
+            $blocked_author_ids = array_flip(
+                $this->core
+                    ->getCourseEntityManager()
+                    ->getRepository(ForumBlockedUser::class)
+                    ->getUsersBlockedFromForumPosts($author_ids)
+            );
+        }
         foreach ($posts as $post) {
             $post_data[] = $this->createPost(
                 $first_post,
@@ -341,6 +355,7 @@ class ForumThreadView extends AbstractView {
                 $display_option,
                 $includeReply,
                 $post_box_id,
+                $blocked_author_ids,
                 false,
             );
             if ($first) {
@@ -709,13 +724,16 @@ class ForumThreadView extends AbstractView {
      * @param string $display_option
      * @param bool $includeReply
      * @param int $post_box_id
+     * @param array<string, int> $blocked_author_ids
      * @param bool $render
      * @return mixed[]|string
      */
-    public function createPost(Post $first_post, Thread $thread, Post $post, bool $first, string $display_option, bool $includeReply, int $post_box_id, bool $render = false): array|string {
+    public function createPost(Post $first_post, Thread $thread, Post $post, bool $first, string $display_option, bool $includeReply, int $post_box_id, array $blocked_author_ids, bool $render = false): array|string {
         $user = $this->core->getUser();
         // Get formatted time stamps
         $date = DateUtils::convertTimeStamp($this->core->getUser(), DateUtils::dateTimeToString($post->getTimestamp()), $this->core->getConfig()->getDateTimeFormat()->getFormat('forum'));
+        // Raw ISO timestamp for Twig date comparisons (avoids locale-formatted string parsing failures)
+        $post_date_raw = DateUtils::dateTimeToString($post->getTimestamp());
 
         if (!$post->getHistory()->isEmpty()) {
             $edit_timestamp = max($post->getHistory()->map(function ($x) {
@@ -867,6 +885,7 @@ class ForumThreadView extends AbstractView {
             "post_user_info" => $post_user_info,
             "post_up_duck" => $post_up_duck,
             "post_date" => $date,
+            "post_date_raw" => $post_date_raw,
             "edit_date" => $edit_date,
             "post_buttons" => $post_button,
             "visible_username" => $visible_username,
@@ -879,14 +898,11 @@ class ForumThreadView extends AbstractView {
             "has_history" => !$post->getHistory()->isEmpty(),
             "thread_previously_merged" => $merged_thread,
             "thread_announced" => $thread->isAnnounced(),
-<<<<<<< HEAD
             "is_author_blocked" => ($user->accessAdmin() && $post->getAuthor()->getId() !== $user->getId())
-                ? $this->core->getQueries()->isUserBlockedFromForumPosts($post->getAuthor()->getId())
+                ? isset($blocked_author_ids[$post->getAuthor()->getId()])
                 : false,
-=======
             "show_reply_announcement" => $thread->isPinned() && $user->accessFullGrading() && $first,
             "email_enabled" => $this->core->getConfig()->isEmailEnabled(),
->>>>>>> upstream/main
         ];
 
         if ($render) {
